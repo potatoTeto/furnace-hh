@@ -1902,6 +1902,16 @@ void FurnaceGUI::openFileDialog(FurnaceGUIFileDialogs type) {
         dpiScale
       );
       break;
+    case GUI_FILE_EXPORT_MML:
+      if (!dirExists(workingDirMMLExport)) workingDirMMLExport=getHomeDir();
+      hasOpened=fileDialog->openSave(
+        "Export MML-GB",
+        {"MML file", "*.mml",
+         "text file", "*.txt"},
+        workingDirMMLExport,
+        dpiScale
+      );
+      break;
     case GUI_FILE_EXPORT_ROM:
       showError("Coming soon!");
       break;
@@ -4200,6 +4210,10 @@ bool FurnaceGUI::loop() {
             drawExportCommand();
             ImGui::EndMenu();
           }
+          if (ImGui::BeginMenu("export mml...")) {
+            drawExportMml();
+            ImGui::EndMenu();
+          }
         } else if (settings.exportOptionsLayout==2) {
           if (ImGui::MenuItem("export audio...")) {
             curExportType=GUI_EXPORT_AUDIO;
@@ -4235,6 +4249,10 @@ bool FurnaceGUI::loop() {
           }
           if (ImGui::MenuItem("export command stream...")) {
             curExportType=GUI_EXPORT_CMD_STREAM;
+            displayExport=true;
+          }
+          if (ImGui::MenuItem("export mml...")) {
+            curExportType=GUI_EXPORT_MML;
             displayExport=true;
           }
         } else {
@@ -4915,6 +4933,10 @@ bool FurnaceGUI::loop() {
           if (curFileDialog==GUI_FILE_EXPORT_CMDSTREAM) {
             checkExtension(".bin");
           }
+          if (curFileDialog==GUI_FILE_EXPORT_MML) {
+            const char* fallbackExt=(settings.sysFileDialog || ImGuiFileDialog::Instance()->GetCurrentFilter()=="MML file")?".mml":".txt";
+            checkExtensionDual(".mml",".text",fallbackExt);
+          }
           if (curFileDialog==GUI_FILE_EXPORT_COLORS) {
             checkExtension(".cfgc");
           }
@@ -5314,6 +5336,32 @@ bool FurnaceGUI::loop() {
                   fwrite(w->getFinalBuf(),1,w->size(),f);
                   fclose(f);
                   pushRecentSys(copyOfName.c_str());
+                } else {
+                  showError("could not open file!");
+                }
+                w->finish();
+                delete w;
+                if (!e->getWarnings().empty()) {
+                  showWarning(e->getWarnings(),GUI_WARN_GENERIC);
+                }
+              } else {
+                showError(fmt::sprintf("could not write command stream! (%s)",e->getLastError()));
+              }
+              break;
+            }
+            case GUI_FILE_EXPORT_MML: {
+              String lowerCase=fileName;
+              for (char& i: lowerCase) {
+                if (i>='A' && i<='Z') i+='a'-'A';
+              }
+              bool isBinary=false;
+
+              SafeWriter* w=e->saveMML(mmlgbLegacyNoise);
+              if (w!=NULL) {
+                FILE* f=ps_fopen(copyOfName.c_str(),"wb");
+                if (f!=NULL) {
+                  fwrite(w->getFinalBuf(),1,w->size(),f);
+                  fclose(f);
                 } else {
                   showError("could not open file!");
                 }
@@ -6540,6 +6588,7 @@ bool FurnaceGUI::init() {
   workingDirVGMExport=e->getConfString("lastDirVGMExport",workingDir);
   workingDirZSMExport=e->getConfString("lastDirZSMExport",workingDir);
   workingDirROMExport=e->getConfString("lastDirROMExport",workingDir);
+  workingDirMMLExport=e->getConfString("lastDirMMLExport",workingDir);
   workingDirFont=e->getConfString("lastDirFont",workingDir);
   workingDirColors=e->getConfString("lastDirColors",workingDir);
   workingDirKeybinds=e->getConfString("lastDirKeybinds",workingDir);
@@ -7102,6 +7151,7 @@ void FurnaceGUI::commitState() {
   e->setConf("lastDirVGMExport",workingDirVGMExport);
   e->setConf("lastDirZSMExport",workingDirZSMExport);
   e->setConf("lastDirROMExport",workingDirROMExport);
+  e->setConf("lastDirMMLExport",workingDirMMLExport);
   e->setConf("lastDirFont",workingDirFont);
   e->setConf("lastDirColors",workingDirColors);
   e->setConf("lastDirKeybinds",workingDirKeybinds);
@@ -7313,6 +7363,7 @@ FurnaceGUI::FurnaceGUI():
   zsmExportLoop(true),
   zsmExportOptimize(true),
   vgmExportPatternHints(false),
+  mmlgbLegacyNoise(true),
   vgmExportDirectStream(false),
   displayInsTypeList(false),
   portrait(false),

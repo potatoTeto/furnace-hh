@@ -251,6 +251,23 @@ void FurnaceGUI::drawExportCommand(bool onWindow) {
   }
 }
 
+void FurnaceGUI::drawExportMml(bool onWindow) {
+  exitDisabledTimer=1;
+  
+  ImGui::Text(
+    "Export an MML file suitable for MML-GB."
+  );
+  if (onWindow) {
+    ImGui::Separator();
+    if (ImGui::Button("Cancel",ImVec2(200.0f*dpiScale,0))) ImGui::CloseCurrentPopup();
+    ImGui::SameLine();
+  }
+  if (ImGui::Button("Export",ImVec2(200.0f*dpiScale,0))) {
+    openFileDialog(GUI_FILE_EXPORT_MML);
+    ImGui::CloseCurrentPopup();
+  }
+}
+
 void FurnaceGUI::drawExport() {
   if (settings.exportOptionsLayout==1 || curExportType==GUI_EXPORT_NONE) {
     if (ImGui::BeginTabBar("ExportTypes")) {
@@ -290,6 +307,10 @@ void FurnaceGUI::drawExport() {
         drawExportCommand(true);
         ImGui::EndTabItem();
       }
+      if (ImGui::BeginTabItem("MML")) {
+        drawExportMml(true);
+        ImGui::EndTabItem();
+      }
       ImGui::EndTabBar();
     }
   } else switch (curExportType) {
@@ -310,6 +331,9 @@ void FurnaceGUI::drawExport() {
       break;
     case GUI_EXPORT_CMD_STREAM:
       drawExportCommand(true);
+      break;
+    case GUI_EXPORT_MML:
+      drawExportMml(true);
       break;
     default:
       ImGui::Text("congratulations! you've unlocked a secret panel.");

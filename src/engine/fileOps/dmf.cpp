@@ -18,6 +18,7 @@
  */
 
 #include "fileOpsCommon.h"
+#include <regex>
 
 // known version numbers:
 // - 27: v1.1.7
@@ -1976,5 +1977,597 @@ SafeWriter* DivEngine::saveText(bool separatePatterns) {
   }
 
   saveLock.unlock();
+  return w;
+}
+
+int _computeMmlOctave(int noteValue, int delta) {
+  return (noteValue)/12+delta;
+}
+
+int _computeMmlTempo(DivSubSong* curSubSong, double divider) {
+  return 150.0 / (curSubSong->timeBase + 1) * divider / 120.0;
+}
+
+std::string _computeMmlOctString(int prevOctave, int noteValue, int delta, bool reversedNotation) {
+  if (noteValue < 0) return "";
+
+  int newOct = _computeMmlOctave(noteValue, delta);
+  int octDiff = newOct - prevOctave;
+  if (prevOctave < 0 || std::abs(octDiff) >= 3) {
+    return fmt::sprintf(" o%d ", newOct);
+  } else {
+    if (octDiff == 0) return "";
+
+    std::string result = "";
+    for (int i = 0; i < std::abs(octDiff); i++) {
+      if (reversedNotation)
+        result += octDiff < 0 ? '<' : '>';
+      else
+        result += octDiff < 0 ? '>' : '<';
+    }
+    return result;
+  }
+}
+
+struct _MMLGBState {
+  int prevVol[4];
+  int currVol[4];
+  int volTick[4];
+  int prevPan[4];
+  int currPan[4];
+  int prevIns[4];
+  int currIns[4];
+  int currNote[4];
+  int currOct[4];
+  int prevOrder[4];
+  int prevRow[4];
+  int cmdTick[4];
+  bool chanNameUsed[4];
+  bool noteOn[4];
+  int prevDuty[2];
+  int currDuty[2];
+  int dutyTick[2];
+  int prevEnv[4];
+  int currEnv[4];
+  int prevWave;
+  int currWave;
+  int waveTick;
+  int prevNoise;
+  int currNoise;
+  int noiseTick;
+  int currTempo;
+  int tempoTick;
+
+  _MMLGBState()
+  : prevVol{-1, -1, -1, -1}, // A bit silly I know, but we'll use -1 to indicate these are uninitialized.
+    currVol{15, 15, 15, 15},
+    volTick{-1, -1, -1, -1},
+    prevPan{-2, -2, -2, -2}, // Just another silly impossible starting value for panning.
+    currPan{ 0,  0,  0,  0},
+    prevIns{-1, -1, -1, -1},
+    currIns{ 0,  0,  0,  0},
+    currNote{-1, -1, -1, -1}, // In this case, -1 shall indicate a rest.
+    currOct{-1, -1, -1, -1},
+    prevOrder{-1, -1, -1, -1},
+    prevRow{-1, -1, -1, -1},
+    cmdTick{ 0,  0,  0,  0},
+    chanNameUsed{false, false, false, false},
+    noteOn{false, false, false, false},
+    prevDuty{ -1,  -1},
+    currDuty{  0,   0},
+    dutyTick{ -1,  -1},
+    prevEnv{-16, -16, -16, -16},
+    currEnv{-16, -16, -16, -16},
+    prevWave(-1),
+    currWave(0),
+    waveTick(-1),
+    prevNoise(-1),
+    currNoise(0),
+    noiseTick(-1),
+    currTempo(-1),
+    tempoTick(-1)
+  {
+  }
+};
+
+const std::map<int, std::string> _mmlTickMap = {
+  // Base notes:
+  {3, "64"}, {6, "32"}, {12, "16"}, {24, "8"}, {48, "4"}, {96, "2"}, {192, "1"}, // 2-base
+  {4, "48"}, {8, "24"}, {16, "12"}, {32, "6"}, {64, "3"}, // 3-base
+  // Single dotted notes:
+  {9, "32."}, {18, "16."}, {36, "8."}, {72, "4."}, {144, "2."}, // 2-base
+  // Double dotted notes:
+  {21, "16.."}, {42, "8.."}, {84, "4.."}, {168, "2.."}, // 2-base
+  {28, "12.."}, {56, "6.."}, {112, "3.."}, // 3-base
+  // Triple dotted notes:
+  {45, "8..."}, {90, "4..."}, {180, "2..."}, // 2-base
+  {60, "6..."}, {120, "3..."}, // 3-base
+  // Quadruple dotted notes:
+  {93, "4...."}, {186, "2...."}, // 2-base
+  {124, "3...."}, // 3-base
+  // Quintuple dotted note:
+  {189, "2....."} // 2-base
+};
+
+std::string _computeMmlPureTick(int ticks, int maxTicks, bool tiePrefix, bool tieNonFractionalTicks) {
+  if (ticks <= 0) return "";
+
+  std::string result = tiePrefix ? "^" : "";
+  while (true) {
+    int tickCount = std::min(maxTicks, ticks);
+    if (_mmlTickMap.find(tickCount) == _mmlTickMap.end()) {
+      if (tieNonFractionalTicks) {
+        // Split tick count into ties of multiple fractional lengths.
+        // Ex. a=160 becomes a2.^12
+        int leftovers = tickCount;
+        bool start = true;
+        while (leftovers >= 3) {
+          int diff = 0;
+          for (auto it = _mmlTickMap.begin(); it != _mmlTickMap.end(); it++) {
+            int key = it->first;
+            if (key <= leftovers) diff = key;
+            else break;
+          }
+          result += (start ? "" : "^") + _mmlTickMap.at(diff);
+          start = false;
+          leftovers -= diff;
+        }
+        if (leftovers > 0 && leftovers < 3) result += (start ? "" : "^") + fmt::sprintf("=%d", leftovers);
+      } else {
+        result += fmt::sprintf("=%d", tickCount);
+      }
+    } else {
+      result += _mmlTickMap.at(tickCount);
+    }
+    ticks -= maxTicks;
+    if (ticks > 0) result += "^";
+    else break;
+  }
+  return result;
+}
+
+std::string _computeMmlTickLength(_MMLGBState* state, int ticks, int maxTicks, int tick, int chan, bool tieNonFractionalTicks=true) {
+  int oldTick = tick - ticks;
+  bool needsTUpdate = chan == 0 && state->tempoTick > oldTick && state->tempoTick <= tick;
+
+  int ticksA = needsTUpdate ? state->tempoTick - oldTick : ticks;
+  int ticksB = std::max(0, tick - state->tempoTick);
+
+  if (needsTUpdate) {
+    return _computeMmlPureTick(ticksA, maxTicks, false, tieNonFractionalTicks)
+        + fmt::sprintf(" t%d ", state->currTempo)
+        + _computeMmlPureTick(ticksB, maxTicks, true, tieNonFractionalTicks);
+  } else {
+    return _computeMmlPureTick(ticksA, maxTicks, false, tieNonFractionalTicks);
+  }
+}
+
+std::string _computeMmlNote(int noteValue) {
+  switch ((noteValue) % 12) {
+    case 0: return "c";
+    case 1: return "c+";
+    case 2: return "d";
+    case 3: return "d+";
+    case 4: return "e";
+    case 5: return "f";
+    case 6: return "f+";
+    case 7: return "g";
+    case 8: return "g+";
+    case 9: return "a";
+    case 10: return "a+";
+    case 11: return "b";
+    default: return "r"; // Use a rest as default. Just in case something goes awry.
+  }
+}
+
+std::string _writeMMLGBCommands(_MMLGBState* state, int chan) {
+  std::string result;
+  if (chan != 2) {
+    if (chan < 2) {
+      if (state->prevDuty[chan] != state->currDuty[chan]) {
+        result += fmt::sprintf(" @wd%d ", state->currDuty[chan]);
+        state->prevDuty[chan] = state->currDuty[chan];
+      }
+    } else if (chan == 3) {
+      if (state->prevNoise != state->currNoise) {
+        result += fmt::sprintf(" @ns%d ", state->currNoise);
+        state->prevNoise = state->currNoise;
+      }
+    }
+    if (state->prevVol[chan] != state->currVol[chan]) {
+      result += fmt::sprintf(" v%d ", state->currVol[chan]);
+      state->prevVol[chan] = state->currVol[chan];
+    }
+    if (state->prevEnv[chan] != state->currEnv[chan]) {
+      result += fmt::sprintf(" @ve%d ", state->currEnv[chan]);
+      state->prevEnv[chan] = state->currEnv[chan];
+    }
+  } else {
+    if (state->prevVol[chan]/4 != state->currVol[chan]/4) {
+      result += fmt::sprintf(" v%d ", state->currVol[chan]/4);
+      state->prevVol[chan] = state->currVol[chan];
+    }
+    if (state->prevWave != state->currWave) {
+      result += fmt::sprintf(" @wave%d ", state->currWave);
+      state->prevWave = state->currWave;
+    }
+  }
+  if (state->prevPan[chan] != state->currPan[chan]) {
+    result += fmt::sprintf(" y%d ", state->currPan[chan]);
+    state->prevPan[chan] = state->currPan[chan];
+  }
+  return result;
+}
+
+const unsigned char _noiseNoteTableLegacy[256]={
+  107,
+  12, 24, 36, 48,
+  13, 25, 37, 49,
+  14, 26, 38, 50,
+  15, 27, 39, 51,
+  16, 28, 40, 52,
+  17, 29, 41, 53,
+  18, 30, 42, 54,
+  19, 31, 43, 55,
+  20, 32, 44, 56,
+  21, 33, 45, 57,
+  22, 34, 46, 58,
+  23, 35, 47, 59,
+  82, 94, 94, 105,
+  105, 105, 106, 106,
+  106, 106, 107, 107,
+  107, 107, 107, 107,
+  107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107,
+  107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107, 107
+};
+
+const unsigned char _noiseNoteTable[256]={
+  107,
+  12, 24, 36, 48,
+  13, 25, 37, 49,
+  14, 26, 38, 50,
+  15, 27, 39, 51,
+  16, 28, 40, 52,
+  17, 29, 41, 53,
+  18, 30, 42, 54,
+  19, 31, 43, 55,
+  20, 32, 44, 56,
+  21, 33, 45, 57,
+  22, 34, 46, 58,
+  23, 35, 47, 59,
+  108, 109, 110, 111,
+  112, 113, 114, 115,
+  116, 117, 118, 119,
+  120, 121, 122, 123,
+  124, 125, 126, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
+  127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127
+};
+
+int _convertNoiseValue(int noteValue, bool useLegacyNoiseTable) {
+  return useLegacyNoiseTable ? _noiseNoteTableLegacy[noteValue] : _noiseNoteTable[noteValue];
+}
+
+void _writeNormalizedGBWave(DivWavetable* wave, SafeWriter* w) {
+  for (int x = 0; x < 32; x++) {
+    int sx = x * wave->len / 32.0; // "Nearest-neighbor" interpolation
+    int sy = wave->data[sx] * 16.0 / (wave->max - wave->min + 1); // Round-down (de)-amplification
+
+    if (x < 31)
+      w->writeText(fmt::sprintf("%d ",sy));
+    else
+      w->writeText(fmt::sprintf("%d",sy));
+  }
+}
+
+void _writeDefaultWave(SafeWriter* w) {
+  for (int x = 0; x < 32; x++) {
+    int sy = x / 2;
+
+    if (x < 31)
+      w->writeText(fmt::sprintf("%d ",sy));
+    else
+      w->writeText(fmt::sprintf("%d",sy));
+  }
+}
+
+SafeWriter* DivEngine::saveMML(bool useLegacyNoiseTable) {
+  stop();
+  repeatPattern=false;
+  shallStop=false;
+  setOrder(0);
+  BUSY_BEGIN_SOFT;
+  // determine loop point
+  int loopOrder=0;
+  int loopRow=0;
+  int loopEnd=0;
+  walkSong(loopOrder,loopRow,loopEnd);
+  logI("loop point: %d %d",loopOrder,loopRow);
+
+  int cmdPopularity[256];
+  int delayPopularity[256];
+
+  int sortedCmdPopularity[16];
+  int sortedDelayPopularity[16];
+  unsigned char sortedCmd[16];
+  unsigned char sortedDelay[16];
+  
+  SafeWriter* chanStream[DIV_MAX_CHANS];
+  unsigned int chanStreamOff[DIV_MAX_CHANS];
+  bool wroteTick[DIV_MAX_CHANS];
+
+  memset(cmdPopularity,0,256*sizeof(int));
+  memset(delayPopularity,0,256*sizeof(int));
+  memset(chanStream,0,DIV_MAX_CHANS*sizeof(void*));
+  memset(chanStreamOff,0,DIV_MAX_CHANS*sizeof(unsigned int));
+  memset(sortedCmdPopularity,0,16*sizeof(int));
+  memset(sortedDelayPopularity,0,16*sizeof(int));
+  memset(sortedCmd,0,16);
+  memset(sortedDelay,0,16);
+
+  SafeWriter* w=new SafeWriter;
+  w->init();
+
+  // write header
+  w->writeText("; Furnace MML-GB Output\n;\n");
+
+  w->writeText("; Information:\n");
+  w->writeText(fmt::sprintf("; \tname: %s\n",song.name));
+  w->writeText(fmt::sprintf("; \tauthor: %s\n",song.author));
+  w->writeText(fmt::sprintf("; \tcategory: %s\n",song.category));
+
+  w->writeText(";\n");
+
+  w->writeText("; SubSongInformation:\n");
+  w->writeText(fmt::sprintf("; \tname: %s\n",curSubSong->name));
+
+  w->writeText("\n");
+
+  w->writeText("; WaveTable Macros:\n");
+  if (song.waveLen == 0) {
+    // Add Furnace default sawtooth wave if no waves are defined:
+      w->writeText(fmt::sprintf("@wave%d = {",0));
+      _writeDefaultWave(w);
+      w->writeText("}\n");
+  } else {
+    for (int i = 0; i < song.waveLen; i++) {
+      auto wave = getWave(i);
+      w->writeText(fmt::sprintf("@wave%d = {",i));
+      _writeNormalizedGBWave(wave, w);
+      w->writeText("}\n");
+    }
+  }
+  w->writeText("\n");
+
+  w->writeText("; Sequence data:\n");
+
+  // play the song ourselves
+  bool done=false;
+  playSub(false);
+
+  int tick=0;
+  bool oldCmdStreamEnabled=cmdStreamEnabled;
+  cmdStreamEnabled=true;
+  double curDivider=divider;
+  int lastTick[DIV_MAX_CHANS];
+
+  std::string mmlChanStream[4] = {"", "", "", ""};
+  std::string chanNames[4] = {"A", "B", "C", "D"};
+
+  int rowsPerMeasure = curSubSong->hilightB;
+  int rowsPerPattern = curSubSong->patLen;
+
+  int tempo = _computeMmlTempo(curSubSong, curDivider);
+  w->writeText(fmt::sprintf("A t%d\n",tempo));
+  w->writeText(fmt::sprintf("B t%d\n",tempo));
+  w->writeText(fmt::sprintf("C t%d\n",tempo));
+  w->writeText(fmt::sprintf("D t%d\n",tempo));
+  w->writeText("\n\n");
+
+  _MMLGBState st;
+  st.currTempo = tempo;
+  st.tempoTick = -1;
+
+  memset(lastTick,0,DIV_MAX_CHANS*sizeof(int));
+  while (!done) {
+    if (nextTick(false,true) || !playing) {
+      done=true;
+    }
+    // get command stream
+    bool wroteTickGlobal=false;
+    memset(wroteTick,0,DIV_MAX_CHANS*sizeof(bool));
+    if (curDivider != divider) {
+      curDivider = divider;
+      int newTempo = _computeMmlTempo(curSubSong, curDivider);
+      if (newTempo != st.currTempo) {
+        st.currTempo = newTempo;
+        st.tempoTick = tick;
+      }
+    }
+    for (DivCommand& i: cmdStream) {
+      switch (i.cmd) {
+        // strip away hinted/useless commands
+        //case DIV_ALWAYS_SET_VOLUME:
+        //  break;
+        case DIV_CMD_GET_VOLUME:
+          break;
+        case DIV_CMD_VOLUME:
+          break;
+        case DIV_CMD_NOTE_PORTA:
+          break;
+        case DIV_CMD_LEGATO:
+          break;
+        case DIV_CMD_PITCH:
+          break;
+        case DIV_CMD_PRE_NOTE:
+          break;
+        default: {
+          auto chan = i.chan % 4;
+          auto cname = chanNames[chan];
+          auto& mmlStream = mmlChanStream[chan];
+
+          int ticksElapsed = tick - st.cmdTick[chan];
+          if (ticksElapsed > 0) {
+            if (!st.chanNameUsed[chan]) {
+              mmlStream += cname + " ";
+            }
+            mmlStream += _writeMMLGBCommands(&st, chan)
+                      + (st.noteOn[chan] ? "" : _computeMmlOctString(st.currOct[chan], st.currNote[chan], 0, true))
+                      + (st.noteOn[chan] ? "^" : st.currNote[chan] < 0 ? "r" : _computeMmlNote(st.currNote[chan]))
+                      + _computeMmlTickLength(&st, ticksElapsed, 192, tick, chan);
+            st.cmdTick[chan] = tick;
+            if (st.currNote[chan] >= 0) {
+              st.currOct[chan] = _computeMmlOctave(st.currNote[chan], 0);
+            }
+            if (!st.noteOn[chan]) st.noteOn[chan] = true;
+          }
+          if (i.cmd == DIV_CMD_NOTE_ON) {
+            if (i.value < 0x100) {
+              int noteVal = chan==3? _convertNoiseValue(i.value, useLegacyNoiseTable) : i.value;
+              st.currNote[chan] = noteVal;
+            }
+            st.noteOn[chan] = false;
+            auto ins = getIns(st.currIns[chan], DivInstrumentType::DIV_INS_GB);
+            if (chan != 2) {
+              if (!ins->gb.softEnv) {
+                if ((ins->gb.alwaysInit || st.prevIns[chan] != st.currIns[chan]) && tick != st.volTick[chan]) {
+                  st.currVol[chan] = ins->gb.envVol;
+                }
+                st.currEnv[chan] = ((ins->gb.envDir != 0) ? 1 : -1) * ins->gb.envLen;
+              }
+              if (chan < 2) {
+                if (ins->std.dutyMacro.len > 0) {
+                  //if (tick != st.dutyTick[chan]) {
+                    st.currDuty[chan] = ins->std.dutyMacro.val[0];
+                  //}
+                }
+              } else if (chan == 3) {
+                if (ins->std.dutyMacro.len > 0) {
+                  //if (tick != st.noiseTick) {
+                    st.currNoise = std::min(1, ins->std.dutyMacro.val[0]); // Not sure if Furnace clamps at 1 or if it AND's 1 if over... needs more testing.
+                  //}
+                }
+              }
+            } else if (chan == 2) {
+              if (ins->std.waveMacro.len > 0) {
+                //if (tick != st.waveTick) {
+                  st.currWave = ins->std.waveMacro.val[0];
+                  if (st.currWave >= song.waveLen) st.currWave = song.waveLen - 1;
+                //}
+              }
+            }
+            st.prevIns[chan] = st.currIns[chan];
+            //st.currVol[chan] = i.value2;
+          } else if (i.cmd == DIV_CMD_NOTE_OFF || i.cmd == DIV_CMD_NOTE_OFF_ENV) {
+            st.currNote[chan] = -1;
+            st.noteOn[chan] = false;
+          } else if (i.cmd == DIV_CMD_INSTRUMENT) {
+            st.currIns[chan] = i.value;
+          } else if (i.cmd == DIV_CMD_HINT_VOLUME) {
+            if (chan == 2) st.noteOn[chan] = false; // WAVE channel should retrigger the note on volume changes.
+            // Pulse and NOISE can't change volume mid-note either, but Furnace playback behavior for attempting that is the same as MMLGB
+            // (AKA: Continue the note without volume change. WAVE is an exception and actually updates volume in Furnace)
+            st.currVol[chan] = i.value;
+            st.volTick[chan] = tick;
+          } else if (i.cmd == DIV_CMD_PANNING) {
+            int l = i.value;
+            int r = i.value2;
+
+            if ((l == 0) == (r == 0)) {
+              st.currPan[chan] = 0; // If left and right volumes are the same, center the panning
+            } else if (l == 0) {
+              st.currPan[chan] = 1;
+            } else {
+              st.currPan[chan] = -1;
+            }
+          } else if (i.cmd == DIV_CMD_STD_NOISE_MODE) {
+            if (chan < 2) {
+              st.currDuty[chan] = i.value;
+              st.dutyTick[chan] = tick;
+            } else if (chan == 3) {
+              st.currNoise = i.value;
+              st.noiseTick = tick;
+              st.noteOn[chan] = false; // NOISE type change should retrigger note
+            }
+          } else if (i.cmd == DIV_CMD_WAVE) {
+            if (chan == 2) {
+              st.currWave = i.value;
+              if (st.currWave >= song.waveLen) st.currWave = song.waveLen - 1;
+              st.waveTick = tick;
+              st.noteOn[chan] = false; // WAVE change should retrigger note
+            }
+          }
+
+          if (curOrder != st.prevOrder[chan]) {
+            mmlStream += "\n\n" + cname + " "; // Add double line break on pattern boundary
+            st.chanNameUsed[chan] = true;
+          } else if ((curRow-1) / rowsPerMeasure != (st.prevRow[chan]-1) / rowsPerMeasure) {
+            mmlStream += "\n" + cname + " "; // Add single line break on "measure" boundary (hilightB points)
+            st.chanNameUsed[chan] = true;
+          }
+
+          st.prevRow[chan] = curRow;
+          st.prevOrder[chan] = curOrder;
+          
+          break;
+        }
+      }
+    }
+    cmdStream.clear();
+    tick++;
+  }
+  cmdStreamEnabled=oldCmdStreamEnabled;
+
+  // Write leftover notes:
+  for (int chan = 0; chan < 4; chan++) {
+    auto cname = chanNames[chan];
+    auto& mmlStream = mmlChanStream[chan];
+
+    int ticksElapsed = tick - st.cmdTick[chan] - 1;
+    if (ticksElapsed > 0) {
+      if (!st.chanNameUsed[chan]) {
+        mmlStream += cname + " ";
+      }
+      mmlStream += _writeMMLGBCommands(&st, chan)
+                + (st.noteOn[chan] ? "" : _computeMmlOctString(st.currOct[chan], st.currNote[chan], 0, true))
+                + (st.noteOn[chan] ? "^" : st.currNote[chan] < 0 ? "r" : _computeMmlNote(st.currNote[chan]))
+                + _computeMmlTickLength(&st, ticksElapsed, 192, tick - 1, chan);
+    }
+  }
+
+  for (int i = 0; i < 4; i++) {
+    mmlChanStream[i] = std::regex_replace(mmlChanStream[i], std::regex("[ ]{2,}"), " ");
+  }
+
+  std::string output = std::regex_replace(
+      mmlChanStream[0] + "\n\n\n"
+    + mmlChanStream[1] + "\n\n\n"
+    + mmlChanStream[2] + "\n\n\n"
+    + mmlChanStream[3] + "\n",
+    std::regex("[A-D][ ]*\\n"), "" // Fix empty channel line definitions
+  );
+  output = std::regex_replace(output, std::regex("[\\n]{4,}"), "\n\n\n");
+
+  w->writeText(output);
+
+  remainingLoops=-1;
+  playing=false;
+  freelance=false;
+  extValuePresent=false;
+  BUSY_END;
+
   return w;
 }

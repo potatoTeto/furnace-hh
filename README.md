@@ -1,4 +1,24 @@
-# Furnace (chiptune tracker)
+# Furnace-HH
+
+## This is a fork of the initial fork, which can be found at: [https://github.com/jimmy-dsi/furnace-hh](https://github.com/jimmy-dsi/furnace-hh)
+
+Furnace-HH (short for: Furnace for Homebrew & Hacking) is a fork of tildearrow's Furnace Tracker intended to provide export capabilities for a variety of different sound engines across various systems.
+
+at the time of this writing, only one engine is supported (with a few more planned for development), but this list is expected to grow overtime.
+
+for more information on which features and effects each engine supports, check out the [documentation for each system](papers/doc/7-systems/).
+
+## currently supported engines
+- Game Boy:
+  - [MMLGB](https://github.com/SimonLarsen/mmlgb) (partial support)
+
+## planned engine support
+- Game Boy:
+  - [DevSoundX](https://github.com/DevEd2/DevSoundX)
+- SNES:
+  - AddMusicK
+  - N-SPC
+- more to come!
 
 ![screenshot](papers/screenshot3.png)
 

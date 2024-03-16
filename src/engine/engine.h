@@ -658,6 +658,8 @@ class DivEngine {
     SafeWriter* saveZSM(unsigned int zsmrate=60, bool loop=true, bool optimize=true);
     // dump command stream.
     SafeWriter* saveCommand();
+    // dump to MML.
+    SafeWriter* saveMML(bool useLegacyNoiseTable);
     // export to text
     SafeWriter* saveText(bool separatePatterns=true);
     // export to an audio file
