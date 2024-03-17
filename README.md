@@ -6,7 +6,7 @@ Furnace-HH (short for: Furnace for Homebrew & Hacking) is a fork of tildearrow's
 
 at the time of this writing, only one engine is supported (with a few more planned for development), but this list is expected to grow overtime.
 
-for more information on which features and effects each engine supports, check out the [documentation for each system](papers/doc/7-systems/).
+for more information on which features and effects each engine supports, check out the [documentation for each system](doc/7-systems/).
 
 ## currently supported engines
 - Game Boy:
