@@ -4837,6 +4837,7 @@ bool FurnaceGUI::loop() {
           break;
         case GUI_FILE_EXPORT_ROM:
         case GUI_FILE_EXPORT_TEXT:
+        case GUI_FILE_EXPORT_MML:
         case GUI_FILE_EXPORT_CMDSTREAM:
           workingDirROMExport=fileDialog->getPath()+DIR_SEPARATOR_STR;
           break;
@@ -5356,7 +5357,7 @@ bool FurnaceGUI::loop() {
               }
               bool isBinary=false;
 
-              SafeWriter* w=e->saveMML(mmlgbLegacyNoise);
+              SafeWriter* w=e->saveMML(mmlgbLegacyNoise, mmlExportType);
               if (w!=NULL) {
                 FILE* f=ps_fopen(copyOfName.c_str(),"wb");
                 if (f!=NULL) {
@@ -7363,7 +7364,8 @@ FurnaceGUI::FurnaceGUI():
   zsmExportLoop(true),
   zsmExportOptimize(true),
   vgmExportPatternHints(false),
-  mmlgbLegacyNoise(true),
+  mmlgbLegacyNoise(false),
+  mmlExportType(0),
   vgmExportDirectStream(false),
   displayInsTypeList(false),
   portrait(false),

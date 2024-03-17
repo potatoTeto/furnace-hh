@@ -2284,7 +2284,20 @@ void _writeDefaultWave(SafeWriter* w) {
   }
 }
 
-SafeWriter* DivEngine::saveMML(bool useLegacyNoiseTable) {
+SafeWriter* DivEngine::saveMML(bool useLegacyNoiseTable, int mmlExportType) {
+  switch (mmlExportType) {
+    default:
+      break;
+    case 0: // MML-GB
+      return saveMMLGB(useLegacyNoiseTable, mmlExportType);
+    case 1: // MML-GBA
+      return saveMMLGBA(useLegacyNoiseTable, mmlExportType);
+  }
+
+  return 0;
+}
+
+SafeWriter* DivEngine::saveMMLGB(bool useLegacyNoiseTable, int mmlExportType) {
   stop();
   repeatPattern=false;
   shallStop=false;
@@ -2570,4 +2583,8 @@ SafeWriter* DivEngine::saveMML(bool useLegacyNoiseTable) {
   BUSY_END;
 
   return w;
+}
+
+SafeWriter* DivEngine::saveMMLGBA(bool useLegacyNoiseTable, int mmlExportType) {
+  return 0;
 }

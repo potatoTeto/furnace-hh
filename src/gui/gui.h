@@ -1542,6 +1542,7 @@ class FurnaceGUI {
   bool makeDrumkitMode;
   bool audioEngineChanged, settingsChanged, debugFFT;
   bool willExport[DIV_MAX_CHIPS];
+  int mmlExportType;
   int vgmExportVersion;
   int vgmExportTrailingTicks;
   int drawHalt;

@@ -659,7 +659,9 @@ class DivEngine {
     // dump command stream.
     SafeWriter* saveCommand();
     // dump to MML.
-    SafeWriter* saveMML(bool useLegacyNoiseTable);
+    SafeWriter* saveMML(bool useLegacyNoiseTable, int mmlExportType);
+    SafeWriter* saveMMLGB(bool useLegacyNoiseTable, int mmlExportType);
+    SafeWriter* saveMMLGBA(bool useLegacyNoiseTable, int mmlExportType);
     // export to text
     SafeWriter* saveText(bool separatePatterns=true);
     // export to an audio file

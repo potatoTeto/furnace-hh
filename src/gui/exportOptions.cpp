@@ -257,6 +257,20 @@ void FurnaceGUI::drawExportMml(bool onWindow) {
   ImGui::Text(
     "Export an MML file suitable for MML-GB."
   );
+  
+  ImGui::RadioButton("MML-GB", &mmlExportType, 0);
+  ImGui::RadioButton("MML-GBA (Not implemented!)", &mmlExportType, 1);
+
+  switch(mmlExportType) {
+    default:
+      break;
+    case 0: // MML-GB
+      ImGui::Checkbox("use \"legacy\" noise table",&mmlgbLegacyNoise);
+      break;
+    case 1: // MML-GBA
+      break;
+  }
+
   if (onWindow) {
     ImGui::Separator();
     if (ImGui::Button("Cancel",ImVec2(200.0f*dpiScale,0))) ImGui::CloseCurrentPopup();

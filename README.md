@@ -10,7 +10,7 @@ for more information on which features and effects each engine supports, check o
 
 ## currently supported engines
 - Game Boy:
-  - [MMLGB](https://github.com/SimonLarsen/mmlgb) (partial support)
+  - [MMLGB](https://github.com/potatoTeto/mmlgb) (partial support)
 
 ## planned engine support
 - Game Boy:
