@@ -259,7 +259,7 @@ void FurnaceGUI::drawExportMml(bool onWindow) {
   );
   
   ImGui::RadioButton("MML-GB", &mmlExportType, 0);
-  ImGui::RadioButton("MML-GBA (Not implemented!)", &mmlExportType, 1);
+  ImGui::RadioButton("MML-GBA", &mmlExportType, 1);
 
   switch(mmlExportType) {
     default:

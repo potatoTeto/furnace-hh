@@ -2070,6 +2070,67 @@ struct _MMLGBState {
   }
 };
 
+struct _MMLGBAState {
+  int prevVol[12];
+  int currVol[12];
+  int volTick[12];
+  int prevPan[12];
+  int currPan[12];
+  int prevIns[12];
+  int currIns[12];
+  int currNote[12];
+  int currOct[12];
+  int prevOrder[12];
+  int prevRow[12];
+  int cmdTick[12];
+  bool chanNameUsed[12];
+  bool noteOn[12];
+  int prevDuty[2];
+  int currDuty[2];
+  int dutyTick[2];
+  int prevEnv[4];
+  int currEnv[4];
+  int prevWave;
+  int currWave;
+  int waveTick;
+  int prevNoise;
+  int currNoise;
+  int noiseTick;
+  int currTempo;
+  int tempoTick;
+
+  _MMLGBAState()
+  : prevVol{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // A bit silly I know, but we'll use -1 to indicate these are uninitialized.
+    currVol{15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15},
+    volTick{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+    prevPan{-2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2}, // Just another silly impossible starting value for panning.
+    currPan{ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0},
+    prevIns{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+    currIns{ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0},
+    currNote{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // In this case, -1 shall indicate a rest.
+    currOct{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+    prevOrder{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+    prevRow{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+    cmdTick{ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0},
+    chanNameUsed{false, false, false, false, false, false, false, false, false, false, false, false},
+    noteOn{false, false, false, false, false, false, false, false, false, false, false, false},
+    prevDuty{ -1,  -1},
+    currDuty{  0,   0},
+    dutyTick{ -1,  -1},
+    prevEnv{-16, -16, -16, -16},
+    currEnv{-16, -16, -16, -16},
+    prevWave(-1),
+    currWave(0),
+    waveTick(-1),
+    prevNoise(-1),
+    currNoise(0),
+    noiseTick(-1),
+    currTempo(-1),
+    tempoTick(-1)
+  {
+  }
+};
+
 const std::map<int, std::string> _mmlTickMap = {
   // Base notes:
   {3, "64"}, {6, "32"}, {12, "16"}, {24, "8"}, {48, "4"}, {96, "2"}, {192, "1"}, // 2-base
@@ -2126,7 +2187,23 @@ std::string _computeMmlPureTick(int ticks, int maxTicks, bool tiePrefix, bool ti
   return result;
 }
 
-std::string _computeMmlTickLength(_MMLGBState* state, int ticks, int maxTicks, int tick, int chan, bool tieNonFractionalTicks=true) {
+std::string _computeMmlTickLengthGB(_MMLGBState* state, int ticks, int maxTicks, int tick, int chan, bool tieNonFractionalTicks=true) {
+  int oldTick = tick - ticks;
+  bool needsTUpdate = chan == 0 && state->tempoTick > oldTick && state->tempoTick <= tick;
+
+  int ticksA = needsTUpdate ? state->tempoTick - oldTick : ticks;
+  int ticksB = std::max(0, tick - state->tempoTick);
+
+  if (needsTUpdate) {
+    return _computeMmlPureTick(ticksA, maxTicks, false, tieNonFractionalTicks)
+        + fmt::sprintf(" t%d ", state->currTempo)
+        + _computeMmlPureTick(ticksB, maxTicks, true, tieNonFractionalTicks);
+  } else {
+    return _computeMmlPureTick(ticksA, maxTicks, false, tieNonFractionalTicks);
+  }
+}
+
+std::string _computeMmlTickLengthGBA(_MMLGBAState* state, int ticks, int maxTicks, int tick, int chan, bool tieNonFractionalTicks=true) {
   int oldTick = tick - ticks;
   bool needsTUpdate = chan == 0 && state->tempoTick > oldTick && state->tempoTick <= tick;
 
@@ -2164,32 +2241,87 @@ std::string _writeMMLGBCommands(_MMLGBState* state, int chan) {
   std::string result;
   if (chan != 2) {
     if (chan < 2) {
+      // Handle the GB Pulse channels
       if (state->prevDuty[chan] != state->currDuty[chan]) {
         result += fmt::sprintf(" @wd%d ", state->currDuty[chan]);
         state->prevDuty[chan] = state->currDuty[chan];
       }
     } else if (chan == 3) {
+      // Handle the GB Noise channel
       if (state->prevNoise != state->currNoise) {
         result += fmt::sprintf(" @ns%d ", state->currNoise);
         state->prevNoise = state->currNoise;
       }
     }
-    if (state->prevVol[chan] != state->currVol[chan]) {
-      result += fmt::sprintf(" v%d ", state->currVol[chan]);
-      state->prevVol[chan] = state->currVol[chan];
-    }
-    if (state->prevEnv[chan] != state->currEnv[chan]) {
-      result += fmt::sprintf(" @ve%d ", state->currEnv[chan]);
-      state->prevEnv[chan] = state->currEnv[chan];
+    
+    if (chan < 4) {
+      // Apply to all the GB channels
+      if (state->prevVol[chan] != state->currVol[chan]) {
+        result += fmt::sprintf(" v%d ", state->currVol[chan]);
+        state->prevVol[chan] = state->currVol[chan];
+      }
+      if (state->prevEnv[chan] != state->currEnv[chan]) {
+        result += fmt::sprintf(" @ve%d ", state->currEnv[chan]);
+        state->prevEnv[chan] = state->currEnv[chan];
+      }
     }
   } else {
+    if (chan < 2) {
+      // Handle the Wave channel
+      if (state->prevVol[chan]/4 != state->currVol[chan]/4) {
+        result += fmt::sprintf(" v%d ", state->currVol[chan]/4);
+        state->prevVol[chan] = state->currVol[chan];
+      }
+      if (state->prevWave != state->currWave) {
+        result += fmt::sprintf(" @wave%d ", state->currWave);
+        state->prevWave = state->currWave;
+      }
+    }
+  }
+  if (state->prevPan[chan] != state->currPan[chan]) {
+    result += fmt::sprintf(" y%d ", state->currPan[chan]);
+    state->prevPan[chan] = state->currPan[chan];
+  }
+  return result;
+}
+
+std::string _writeMMLGBACommands(_MMLGBAState* state, int chan) {
+  std::string result;
+  if (chan != 2) {
+    if (chan < 2) {
+      // Handle the GB Pulse channels
+      if (state->prevDuty[chan] != state->currDuty[chan]) {
+        result += fmt::sprintf(" @wd%d ", state->currDuty[chan]);
+        state->prevDuty[chan] = state->currDuty[chan];
+      }
+    } else if (chan == 3) {
+      // Handle the GB Noise channel
+      if (state->prevNoise != state->currNoise) {
+        result += fmt::sprintf(" @ns%d ", state->currNoise);
+        state->prevNoise = state->currNoise;
+      }
+    }
+    
+    if (chan < 4) {
+      // Apply to all the GB channels
+      if (state->prevVol[chan] != state->currVol[chan]) {
+        result += fmt::sprintf(" v%d ", state->currVol[chan]);
+        state->prevVol[chan] = state->currVol[chan];
+      }
+      if (state->prevEnv[chan] != state->currEnv[chan]) {
+        result += fmt::sprintf(" @ve%d ", state->currEnv[chan]);
+        state->prevEnv[chan] = state->currEnv[chan];
+      }
+    }
+  } else if (chan == 2) {
+    // Handle the Wave channel
     if (state->prevVol[chan]/4 != state->currVol[chan]/4) {
-      result += fmt::sprintf(" v%d ", state->currVol[chan]/4);
-      state->prevVol[chan] = state->currVol[chan];
+    result += fmt::sprintf(" v%d ", state->currVol[chan]/4);
+    state->prevVol[chan] = state->currVol[chan];
     }
     if (state->prevWave != state->currWave) {
-      result += fmt::sprintf(" @wave%d ", state->currWave);
-      state->prevWave = state->currWave;
+    result += fmt::sprintf(" @wave%d ", state->currWave);
+    state->prevWave = state->currWave;
     }
   }
   if (state->prevPan[chan] != state->currPan[chan]) {
@@ -2440,7 +2572,7 @@ SafeWriter* DivEngine::saveMMLGB(bool useLegacyNoiseTable, int mmlExportType) {
             mmlStream += _writeMMLGBCommands(&st, chan)
                       + (st.noteOn[chan] ? "" : _computeMmlOctString(st.currOct[chan], st.currNote[chan], 0, true))
                       + (st.noteOn[chan] ? "^" : st.currNote[chan] < 0 ? "r" : _computeMmlNote(st.currNote[chan]))
-                      + _computeMmlTickLength(&st, ticksElapsed, 192, tick, chan);
+                      + _computeMmlTickLengthGB(&st, ticksElapsed, 192, tick, chan);
             st.cmdTick[chan] = tick;
             if (st.currNote[chan] >= 0) {
               st.currOct[chan] = _computeMmlOctave(st.currNote[chan], 0);
@@ -2557,7 +2689,7 @@ SafeWriter* DivEngine::saveMMLGB(bool useLegacyNoiseTable, int mmlExportType) {
       mmlStream += _writeMMLGBCommands(&st, chan)
                 + (st.noteOn[chan] ? "" : _computeMmlOctString(st.currOct[chan], st.currNote[chan], 0, true))
                 + (st.noteOn[chan] ? "^" : st.currNote[chan] < 0 ? "r" : _computeMmlNote(st.currNote[chan]))
-                + _computeMmlTickLength(&st, ticksElapsed, 192, tick - 1, chan);
+                + _computeMmlTickLengthGB(&st, ticksElapsed, 192, tick - 1, chan);
     }
   }
 
@@ -2585,6 +2717,335 @@ SafeWriter* DivEngine::saveMMLGB(bool useLegacyNoiseTable, int mmlExportType) {
   return w;
 }
 
+
+
 SafeWriter* DivEngine::saveMMLGBA(bool useLegacyNoiseTable, int mmlExportType) {
-  return 0;
+  stop();
+  repeatPattern=false;
+  shallStop=false;
+  setOrder(0);
+  BUSY_BEGIN_SOFT;
+  // determine loop point
+  int loopOrder=0;
+  int loopRow=0;
+  int loopEnd=0;
+  walkSong(loopOrder,loopRow,loopEnd);
+  logI("loop point: %d %d",loopOrder,loopRow);
+
+  int cmdPopularity[256];
+  int delayPopularity[256];
+
+  int sortedCmdPopularity[16];
+  int sortedDelayPopularity[16];
+  unsigned char sortedCmd[16];
+  unsigned char sortedDelay[16];
+  
+  SafeWriter* chanStream[DIV_MAX_CHANS];
+  unsigned int chanStreamOff[DIV_MAX_CHANS];
+  bool wroteTick[DIV_MAX_CHANS];
+
+  memset(cmdPopularity,0,256*sizeof(int));
+  memset(delayPopularity,0,256*sizeof(int));
+  memset(chanStream,0,DIV_MAX_CHANS*sizeof(void*));
+  memset(chanStreamOff,0,DIV_MAX_CHANS*sizeof(unsigned int));
+  memset(sortedCmdPopularity,0,16*sizeof(int));
+  memset(sortedDelayPopularity,0,16*sizeof(int));
+  memset(sortedCmd,0,16);
+  memset(sortedDelay,0,16);
+
+  SafeWriter* w=new SafeWriter;
+  w->init();
+
+  // write header
+  w->writeText("; Furnace MML-GBA Output\n;\n");
+
+  w->writeText("; Information:\n");
+  w->writeText(fmt::sprintf("; \tname: %s\n",song.name));
+  w->writeText(fmt::sprintf("; \tauthor: %s\n",song.author));
+  w->writeText(fmt::sprintf("; \tcategory: %s\n",song.category));
+
+  w->writeText(";\n");
+
+  w->writeText("; SubSongInformation:\n");
+  w->writeText(fmt::sprintf("; \tname: %s\n",curSubSong->name));
+
+  w->writeText("\n");
+
+  // Log samples
+  /*
+  for (int i=0; i<song.sampleLen; i++) {
+  DivSample* sample=song.sample[i];
+
+  w->writeText(fmt::sprintf("## %.2X: %s\n\n",i,sample->name));
+
+  w->writeText(fmt::sprintf("- format: %d\n",(int)sample->depth));
+  w->writeText(fmt::sprintf("- data length: %d\n",sample->getCurBufLen()));
+  w->writeText(fmt::sprintf("- samples: %d\n",sample->samples));
+  w->writeText(fmt::sprintf("- rate: %d\n",sample->centerRate));
+  w->writeText(fmt::sprintf("- compat rate: %d\n",sample->rate));
+  w->writeText(fmt::sprintf("- loop: %s\n",trueFalse[sample->loop?1:0]));
+  if (sample->loop) {
+      w->writeText(fmt::sprintf("  - start: %d\n",sample->loopStart));
+      w->writeText(fmt::sprintf("  - end: %d\n",sample->loopEnd));
+      w->writeText(fmt::sprintf("  - mode: %s\n",sampleLoopModes[sample->loopMode&3]));
+  }
+  w->writeText(fmt::sprintf("- BRR emphasis: %s\n",trueFalse[sample->brrEmphasis?1:0]));
+  w->writeText(fmt::sprintf("- dither: %s\n",trueFalse[sample->dither?1:0]));
+
+  unsigned char* buf=(unsigned char*)sample->getCurBuf();
+  unsigned int bufLen=sample->getCurBufLen();
+  w->writeText("\n```");
+  for (unsigned int i=0; i<bufLen; i++) {
+      if ((i&15)==0) w->writeText(fmt::sprintf("\n%.8X:",i));
+      w->writeText(fmt::sprintf(" %.2X",buf[i]));
+  }
+  w->writeText("\n```\n\n");
+  }
+  */
+
+  w->writeText("; WaveTable Macros:\n");
+  if (song.waveLen == 0) {
+    // Add Furnace default sawtooth wave if no waves are defined:
+      w->writeText(fmt::sprintf("@wave%d = {",0));
+      _writeDefaultWave(w);
+      w->writeText("}\n");
+  } else {
+    for (int i = 0; i < song.waveLen; i++) {
+      auto wave = getWave(i);
+      w->writeText(fmt::sprintf("@wave%d = {",i));
+      _writeNormalizedGBWave(wave, w);
+      w->writeText("}\n");
+    }
+  }
+  w->writeText("\n");
+
+  w->writeText("; Sequence data:\n");
+
+  // play the song ourselves
+  bool done=false;
+  playSub(false);
+
+  int tick=0;
+  bool oldCmdStreamEnabled=cmdStreamEnabled;
+  cmdStreamEnabled=true;
+  double curDivider=divider;
+  int lastTick[DIV_MAX_CHANS];
+
+  std::string mmlChanStream[12] = {"", "", "", "", "", "", "", "", "", "", "", ""};
+  std::string chanNames[12] = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"};
+
+  int rowsPerMeasure = curSubSong->hilightB;
+  int rowsPerPattern = curSubSong->patLen;
+
+  int tempo = _computeMmlTempo(curSubSong, curDivider);
+  w->writeText(fmt::sprintf("A t%d\n",tempo));
+  w->writeText("\n\n");
+
+  _MMLGBAState st;
+  st.currTempo = tempo;
+  st.tempoTick = -1;
+
+  memset(lastTick,0,DIV_MAX_CHANS*sizeof(int));
+  while (!done) {
+    if (nextTick(false,true) || !playing) {
+      done=true;
+    }
+    // get command stream
+    bool wroteTickGlobal=false;
+    memset(wroteTick,0,DIV_MAX_CHANS*sizeof(bool));
+    if (curDivider != divider) {
+      curDivider = divider;
+      int newTempo = _computeMmlTempo(curSubSong, curDivider);
+      if (newTempo != st.currTempo) {
+        st.currTempo = newTempo;
+        st.tempoTick = tick;
+      }
+    }
+    for (DivCommand& i: cmdStream) {
+      switch (i.cmd) {
+        // strip away hinted/useless commands
+        //case DIV_ALWAYS_SET_VOLUME:
+        //  break;
+        case DIV_CMD_GET_VOLUME:
+          break;
+        case DIV_CMD_VOLUME:
+          break;
+        case DIV_CMD_NOTE_PORTA:
+          break;
+        case DIV_CMD_LEGATO:
+          break;
+        case DIV_CMD_PITCH:
+          break;
+        case DIV_CMD_PRE_NOTE:
+          break;
+        default: {
+          auto chan = i.chan % 12;
+          auto cname = chanNames[chan];
+          auto& mmlStream = mmlChanStream[chan];
+
+          int ticksElapsed = tick - st.cmdTick[chan];
+          if (ticksElapsed > 0) {
+            if (!st.chanNameUsed[chan]) {
+              mmlStream += cname + " ";
+            }
+            mmlStream += _writeMMLGBACommands(&st, chan)
+                      + (st.noteOn[chan] ? "" : _computeMmlOctString(st.currOct[chan], st.currNote[chan], 0, true))
+                      + (st.noteOn[chan] ? "^" : st.currNote[chan] < 0 ? "r" : _computeMmlNote(st.currNote[chan]))
+                      + _computeMmlTickLengthGBA(&st, ticksElapsed, 192, tick, chan);
+            st.cmdTick[chan] = tick;
+            if (st.currNote[chan] >= 0) {
+              st.currOct[chan] = _computeMmlOctave(st.currNote[chan], 0);
+            }
+            if (!st.noteOn[chan]) st.noteOn[chan] = true;
+          }
+          if (i.cmd == DIV_CMD_NOTE_ON) {
+            if (i.value < 0x100) {
+              int noteVal = chan==3? _convertNoiseValue(i.value, useLegacyNoiseTable) : i.value;
+              st.currNote[chan] = noteVal;
+            }
+            st.noteOn[chan] = false;
+            if (chan < 4) {
+              // Handle GB Channels
+              auto ins = getIns(st.currIns[chan], DivInstrumentType::DIV_INS_GB);
+              if (chan != 2) {
+                if (!ins->gb.softEnv) {
+                  if ((ins->gb.alwaysInit || st.prevIns[chan] != st.currIns[chan]) && tick != st.volTick[chan]) {
+                    st.currVol[chan] = ins->gb.envVol;
+                  }
+                  st.currEnv[chan] = ((ins->gb.envDir != 0) ? 1 : -1) * ins->gb.envLen;
+                }
+                if (chan < 2) {
+                  if (ins->std.dutyMacro.len > 0) {
+                    //if (tick != st.dutyTick[chan]) {
+                      st.currDuty[chan] = ins->std.dutyMacro.val[0];
+                    //}
+                  }
+                } else if (chan == 3) {
+                  if (ins->std.dutyMacro.len > 0) {
+                    //if (tick != st.noiseTick) {
+                      st.currNoise = std::min(1, ins->std.dutyMacro.val[0]); // Not sure if Furnace clamps at 1 or if it AND's 1 if over... needs more testing.
+                    //}
+                  }
+                }
+              } else if (chan == 2) {
+                if (ins->std.waveMacro.len > 0) {
+                  //if (tick != st.waveTick) {
+                    st.currWave = ins->std.waveMacro.val[0];
+                    if (st.currWave >= song.waveLen) st.currWave = song.waveLen - 1;
+                  //}
+                }
+              }
+            } else {
+              // Handle Direct Sound Channels
+              auto ins = getIns(st.currIns[chan]);
+            }
+            st.prevIns[chan] = st.currIns[chan];
+            //st.currVol[chan] = i.value2;
+          } else if (i.cmd == DIV_CMD_NOTE_OFF || i.cmd == DIV_CMD_NOTE_OFF_ENV) {
+            st.currNote[chan] = -1;
+            st.noteOn[chan] = false;
+          } else if (i.cmd == DIV_CMD_INSTRUMENT) {
+            st.currIns[chan] = i.value;
+          } else if (i.cmd == DIV_CMD_HINT_VOLUME) {
+            if (chan == 2) st.noteOn[chan] = false; // WAVE channel should retrigger the note on volume changes.
+            // Pulse and NOISE can't change volume mid-note either, but Furnace playback behavior for attempting that is the same as MMLGB
+            // (AKA: Continue the note without volume change. WAVE is an exception and actually updates volume in Furnace)
+            st.currVol[chan] = i.value;
+            st.volTick[chan] = tick;
+          } else if (i.cmd == DIV_CMD_PANNING) {
+            int l = i.value;
+            int r = i.value2;
+
+            if ((l == 0) == (r == 0)) {
+              st.currPan[chan] = 0; // If left and right volumes are the same, center the panning
+            } else if (l == 0) {
+              st.currPan[chan] = 1;
+            } else {
+              st.currPan[chan] = -1;
+            }
+          } else if (i.cmd == DIV_CMD_STD_NOISE_MODE) {
+            if (chan < 2) {
+              st.currDuty[chan] = i.value;
+              st.dutyTick[chan] = tick;
+            } else if (chan == 3) {
+              st.currNoise = i.value;
+              st.noiseTick = tick;
+              st.noteOn[chan] = false; // NOISE type change should retrigger note
+            }
+          } else if (i.cmd == DIV_CMD_WAVE) {
+            if (chan == 2) {
+              st.currWave = i.value;
+              if (st.currWave >= song.waveLen) st.currWave = song.waveLen - 1;
+              st.waveTick = tick;
+              st.noteOn[chan] = false; // WAVE change should retrigger note
+            }
+          }
+
+          if (curOrder != st.prevOrder[chan]) {
+            mmlStream += "\n\n" + cname + " "; // Add double line break on pattern boundary
+            st.chanNameUsed[chan] = true;
+          } else if ((curRow-1) / rowsPerMeasure != (st.prevRow[chan]-1) / rowsPerMeasure) {
+            mmlStream += "\n" + cname + " "; // Add single line break on "measure" boundary (hilightB points)
+            st.chanNameUsed[chan] = true;
+          }
+
+          st.prevRow[chan] = curRow;
+          st.prevOrder[chan] = curOrder;
+          
+          break;
+        }
+      }
+    }
+    cmdStream.clear();
+    tick++;
+  }
+  cmdStreamEnabled=oldCmdStreamEnabled;
+
+  // Write leftover notes:
+  for (int chan = 0; chan < 12; chan++) {
+    auto cname = chanNames[chan];
+    auto& mmlStream = mmlChanStream[chan];
+
+    int ticksElapsed = tick - st.cmdTick[chan] - 1;
+    if (ticksElapsed > 0) {
+      if (!st.chanNameUsed[chan]) {
+        mmlStream += cname + " ";
+      }
+      mmlStream += _writeMMLGBACommands(&st, chan)
+                + (st.noteOn[chan] ? "" : _computeMmlOctString(st.currOct[chan], st.currNote[chan], 0, true))
+                + (st.noteOn[chan] ? "^" : st.currNote[chan] < 0 ? "r" : _computeMmlNote(st.currNote[chan]))
+                + _computeMmlTickLengthGBA(&st, ticksElapsed, 192, tick - 1, chan);
+    }
+  }
+
+  for (int i = 0; i < 4; i++) {
+    mmlChanStream[i] = std::regex_replace(mmlChanStream[i], std::regex("[ ]{2,}"), " ");
+  }
+
+  std::string output = std::regex_replace(
+      mmlChanStream[0] + "\n\n\n"
+    + mmlChanStream[1] + "\n\n\n"
+    + mmlChanStream[2] + "\n\n\n"
+    + mmlChanStream[3] + "\n\n\n"
+    + mmlChanStream[4] + "\n\n\n"
+    + mmlChanStream[5] + "\n\n\n"
+    + mmlChanStream[6] + "\n\n\n"
+    + mmlChanStream[7] + "\n\n\n"
+    + mmlChanStream[8] + "\n\n\n"
+    + mmlChanStream[9] + "\n\n\n"
+    + mmlChanStream[10] + "\n\n\n"
+    + mmlChanStream[11] + "\n",
+    std::regex("[A-L][ ]*\\n"), "" // Fix empty channel line definitions
+  );
+  output = std::regex_replace(output, std::regex("[\\n]{4,}"), "\n\n\n");
+
+  w->writeText(output);
+
+  remainingLoops=-1;
+  playing=false;
+  freelance=false;
+  extValuePresent=false;
+  BUSY_END;
+
+  return w;
 }
